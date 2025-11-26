@@ -2181,6 +2181,11 @@ SpriteMorph.prototype.primitiveBlocks = function () {
             category: 'lists',
             spec: '$blitz map %repRing over %l'
         },
+        reportParallelMap: {
+            type: 'reporter',
+            category: 'lists',
+            spec: 'parallel map %repRing over %l parallel workers %n',
+        },
         reportKeep: {
             type: 'reporter',
             category: 'lists',
@@ -2269,6 +2274,12 @@ SpriteMorph.prototype.primitiveBlocks = function () {
                         (run (get action))
                         (report 0)))
                     (get data))))`
+        },
+        doParallelForEach: {
+            type: 'command',
+            category: 'lists',
+            spec: 'parallel for each %upvar in %l %cla',
+            defaults: [localize('item')]
         },
 
         // Tables - experimental
@@ -4091,6 +4102,9 @@ SpriteMorph.prototype.blockTemplates = function (
         blocks.push(block('reportListIsEmpty'));
         blocks.push('-');
         blocks.push(block('reportMap'));
+
+        blocks.push(block('reportParallelMap'));
+
         blocks.push(block('reportKeep'));
         blocks.push(block('reportFindFirst'));
         blocks.push(block('reportCombine'));

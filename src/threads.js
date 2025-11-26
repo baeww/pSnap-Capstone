@@ -3536,6 +3536,13 @@ Process.prototype.doForEach = function (upvar, list, script) {
     this.pushContext();
 };
 
+Process.prototype.doParallelForEach = function (upvar, list, script) {
+    // Your implementation here
+    console.log('Parallel forEach called!');
+    // For now, fall back to sequential forEach
+    return this.doForEach(upvar, list, script);
+};
+
 Process.prototype.doFor = function (upvar, start, end, script) {
     // perform a script for every integer step between start and stop,
     // assigning the current iteration index to a variable with the
@@ -3664,6 +3671,149 @@ Process.prototype.reportMap = function (reporter, list) {
         }
     }
     return this.evaluate(reporter, new List(parms));
+};
+
+Process.prototype.reportParallelMap = function (reporter, list) {
+    var job, code, inputName, workerFn, p;
+
+    if (this.context.accumulator) {
+        job = this.context.accumulator;
+        if (job.done) {
+            this.context.accumulator = null;
+            if (job.error) throw job.error;
+            return new List(job.result);
+        }
+        this.pushContext('doYield');
+        this.pushContext();
+        return;
+    }
+
+    this.assertType(list, 'list');
+    list = list.isLinked ? list.asArray() : list.itemsArray();
+
+    if (!(reporter instanceof Context)) {
+        throw new Error('Parallel map requires a ring');
+    }
+
+    // Debugging Mappings and Selector
+    if (reporter.expression) {
+        var selector = reporter.expression.selector;
+        console.log('ParallelMap - Reporter Selector:', selector);
+        console.log('ParallelMap - Mappings available for selector?', !!StageMorph.prototype.codeMappings[selector]);
+        console.log('ParallelMap - Current Mapping:', StageMorph.prototype.codeMappings[selector]);
+        
+        // If mapping is missing, let's see what keys ARE there
+        if (!StageMorph.prototype.codeMappings[selector]) {
+             console.log('ParallelMap - All Available Mappings keys:', Object.keys(StageMorph.prototype.codeMappings));
+        }
+    }
+
+    // Ensure default JS mappings are loaded if not already present
+    if (typeof window.loadJSMappings === 'function') {
+        if (!StageMorph.prototype.codeMappings['reportSum'] || StageMorph.prototype.codeMappings['reportSum'].indexOf('%') !== -1) {
+            console.log('ParallelMap - Loading default JS mappings...');
+            window.loadJSMappings();
+            // Re-check after loading
+            if (reporter.expression) {
+                 console.log('ParallelMap - Post-Load Mapping:', StageMorph.prototype.codeMappings[reporter.expression.selector]);
+            }
+        }
+    } else {
+        console.warn('ParallelMap - window.loadJSMappings is not a function. Check if js_mappings.js is loaded.');
+    }
+
+    try {
+        if (reporter.expression && reporter.expression.mappedCode) {
+            console.log('ParallelMap - Compiling reporter:', reporter.expression.selector);
+            console.log('ParallelMap - Reporter expression:', reporter.expression);
+
+            code = reporter.expression.mappedCode();
+            console.log('ParallelMap - Transpiled Code:', code);
+            if (!code) {
+                console.warn('ParallelMap - Warning: Transpiled code is empty!');
+            }
+        } else {
+            throw new Error('Ring cannot be compiled to JavaScript');
+        }
+    } catch (e) {
+        throw new Error('Parallel map failed to compile reporter: ' + e.message);
+    }
+
+    var paramNames = Array.isArray(reporter.inputs) ? reporter.inputs : null;
+
+    console.log('ParallelMap - Context inputs (parameter names):', paramNames);
+
+    var expressionInputNames = typeof reporter.expression.inputNames === 'function'
+        ? reporter.expression.inputNames()
+        : reporter.expression.inputNames;
+
+    console.log('ParallelMap - expression inputNames:', expressionInputNames);
+
+    var availableNames = paramNames && paramNames.length
+        ? paramNames
+        : expressionInputNames;
+
+    inputName = (availableNames && availableNames.length > 0 && availableNames[0])
+        ? availableNames[0]
+        : 'value';
+
+    console.log('ParallelMap - Input Name:', inputName);
+
+    // Wrap the worker function to log arguments and return values
+    var wrappedCode = "console.log('Worker execution input:', " + inputName + "); " +
+                      "var result = (function() { return " + code + "; })(); " +
+                      "console.log('Worker execution result:', result); " +
+                      "return result;";
+    
+    try {
+        // Fix common transpilation issues:
+        // 1. If code still contains <#n> tags, it means inputs weren't filled (empty slots).
+        //    Replace them with 'undefined' or throw helpful error.
+        if (code.includes('<#')) {
+             console.warn('ParallelMap - Code contains unfilled slots:', code);
+             // Attempt to clean up obvious empty slots if they are just placeholders
+             code = code.replace(/<#\d+>/g, 'undefined');
+        }
+        if (/#\d+/.test(code)) {
+            console.warn('ParallelMap - Code contains legacy # placeholders:', code);
+            code = code.replace(/#(\d+)/g, function (_, idx) {
+                return idx === '1' ? inputName : 'undefined';
+            });
+            console.log('ParallelMap - After legacy placeholder fix:', code);
+        }
+        
+        workerFn = new Function(inputName, wrappedCode);
+        console.log('ParallelMap - Worker Function String:', workerFn.toString());
+    } catch (e) {
+        console.error('ParallelMap - Function compilation error:', e);
+        // Fallback if wrapping fails or code is a block not an expression
+        console.warn('ParallelMap - Failed to wrap with debug logs, using raw code');
+        try {
+            workerFn = new Function(inputName, "return " + code + ";");
+        } catch (e2) {
+             // If it's a statement block, not an expression
+             workerFn = new Function(inputName, code);
+        }
+    }
+
+    job = { done: false, result: null, error: null };
+    this.context.accumulator = job;
+
+    console.log('ParallelMap - List to process:', list);
+
+    p = new Parallel(list);
+    p.map(workerFn).then(function (data) {
+        console.log('ParallelMap - Success:', data);
+        job.result = data;
+        job.done = true;
+    }, function (err) {
+        console.error('ParallelMap - Error:', err);
+        job.error = err;
+        job.done = true;
+    });
+
+    this.pushContext('doYield');
+    this.pushContext();
 };
 
 Process.prototype.reportKeep = function (predicate, list) {
