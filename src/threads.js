@@ -3518,7 +3518,7 @@ Process.prototype.doForEach = function (upvar, list, script) {
     this.pushContext('doYield');
 
     // optimize running the body script for speed:
-    // don't reify the C-slot contents, see: isAutoLambda()
+    // don't reify the C-slot contents, see: isAutoLambda
     // and put the script directly on the stack.
     // below is the alternative - more correct (scope) code,
     // retained in case of issues with the optimized version
@@ -3537,10 +3537,116 @@ Process.prototype.doForEach = function (upvar, list, script) {
 };
 
 Process.prototype.doParallelForEach = function (upvar, list, script) {
-    // Your implementation here
-    console.log('Parallel forEach called!');
-    // For now, fall back to sequential forEach
-    return this.doForEach(upvar, list, script);
+    //Follows the same structure as ParallelMap
+    var job, code, inputName, workerFn, p;
+
+    // If a job is already running for this context, poll it
+    if (this.context.accumulator) {
+        job = this.context.accumulator;
+
+        if (job.done) {
+            this.context.accumulator = null;
+            if (job.error) {
+                throw job.error;
+            }
+            return;
+        }
+
+        this.pushContext('doYield');
+        this.pushContext();
+        return;
+    }
+
+    // Validate and normalize the list
+    this.assertType(list, 'list');
+    list = list.isLinked ? list.asArray() : list.itemsArray();
+    if (!list.length) {
+        return;
+    }
+
+    // Ensure default JS mappings are loaded 
+    if (typeof window.loadJSMappings === 'function') {
+        if (!StageMorph.prototype.codeMappings ||
+            !StageMorph.prototype.codeMappings['reportSum'] ||
+            StageMorph.prototype.codeMappings['reportSum'].indexOf('%') !== -1) {
+
+            console.log('ParallelForEach - Loading default JS mappings...');
+            window.loadJSMappings();
+        }
+    } else {
+        console.warn('ParallelForEach - window.loadJSMappings is not a function. Check if js_mappings.js is loaded.');
+    }
+
+    // Compile the script body into JS using the transpiler
+    try {
+        if (script && script.expression && script.expression.mappedCode) {
+            code = script.expression.mappedCode();
+        } else {
+            throw new Error('Ring cannot be compiled to JavaScript');
+        }
+    } catch (e) {
+        throw new Error('Parallel for-each failed to compile script: ' + e.message);
+    }
+
+    // Work out the input parameter name
+    var paramNames = Array.isArray(script.inputs) ? script.inputs : null;
+    var expressionInputNames = typeof script.expression.inputNames === 'function'
+        ? script.expression.inputNames()
+        : script.expression.inputNames;
+
+    var availableNames = (paramNames && paramNames.length)
+        ? paramNames
+        : expressionInputNames;
+
+    inputName = (availableNames && availableNames.length > 0 && availableNames[0])
+        ? availableNames[0]
+        : 'value';
+
+    // Build the worker function from the transpiled JS
+    var wrappedCode =
+        "var result = (function() { return " + code + "; })();" +
+        "return result;";
+
+    try {
+        // Clean up placeholder artifacts
+        if (code.includes('<#')) {
+            console.warn('ParallelForEach - Code contains unfilled slots:', code);
+            code = code.replace(/<#\d+>/g, 'undefined');
+        }
+        if (/#\d+/.test(code)) {
+            console.warn('ParallelForEach - Code contains legacy # placeholders:', code);
+            code = code.replace(/#(\d+)/g, function (_, idx) {
+                return idx === '1' ? inputName : 'undefined';
+            });
+        }
+
+        workerFn = new Function(inputName, wrappedCode);
+    } catch (e) {
+        console.error('ParallelForEach - Function compilation error:', e);
+        // Fallbacks
+        try {
+            workerFn = new Function(inputName, "return " + code + ";");
+        } catch (e2) {
+            workerFn = new Function(inputName, code);
+        }
+    }
+
+    job = { done: false, error: null };
+    this.context.accumulator = job;
+
+    p = new Parallel(list);
+    p.map(workerFn).then(
+        function (data) {
+            job.done = true;     
+        },
+        function (err) {
+            job.error = err;
+            job.done = true;
+        }
+    );
+
+    this.pushContext('doYield');
+    this.pushContext();
 };
 
 Process.prototype.doFor = function (upvar, start, end, script) {
