@@ -843,6 +843,8 @@ Process.prototype.evaluateBlock = function (block, argCount) {
     if (selector === 'reportVariadicOr' ||
             selector ===  'reportVariadicAnd' ||
             selector === 'doIf' ||
+            selector === 'doIfIsMasterThread' ||
+            selector === 'doSingle' ||
             selector === 'reportIfElse' ||
             selector === 'doReport') {
         if (this.isCatchingErrors) {
@@ -3121,6 +3123,125 @@ Process.prototype.doIf = function (block) {
     acc.args.shift();
 };
 
+Process.prototype.isMasterThread = function () {
+    // workers expose importScripts, master thread does not
+    if (typeof importScripts === 'function') {
+        return false;
+    }
+    if (typeof self !== 'undefined' &&
+            typeof WorkerGlobalScope !== 'undefined' &&
+            self instanceof WorkerGlobalScope) {
+        return false;
+    }
+    return true;
+};
+
+Process.prototype.doIfIsMasterThread = function () {
+    var args = this.context.inputs,
+        outer = this.context.outerContext,
+        isCustomBlock = this.context.isCustomBlock;
+
+    this.popContext();
+    if (this.isMasterThread() && args[0]) {
+        this.pushContext(args[0].blockSequence(), outer);
+        if (this.context) {
+            this.context.isCustomBlock = isCustomBlock;
+        }
+    }
+    this.pushContext();
+};
+
+Process.prototype.doSingle = function (body) {
+    var frame = this.context,
+        block = frame.expression instanceof BlockMorph ?
+            frame.expression
+            : null,
+        outer = frame.outerContext,
+        isCustomBlock = frame.isCustomBlock,
+        state;
+
+    if (!block) {
+        this.popContext();
+        this.pushContext();
+        return;
+    }
+
+    if (!block.__singleState) {
+        Object.defineProperty(block, '__singleState', {
+            value: {
+                generation: 0,
+                owner: null,
+                depth: 0
+            },
+            writable: true,
+            configurable: true
+        });
+    }
+    state = block.__singleState;
+
+    if (frame.singleTicket === undefined) {
+        frame.singleTicket = state.generation;
+    }
+
+    if (state.owner &&
+            state.owner !== this &&
+            (!state.owner.isRunning || !state.owner.isRunning())) {
+        state.owner = null;
+        state.depth = 0;
+        state.generation += 1;
+    }
+
+    if (state.owner &&
+            state.owner !== this &&
+            state.generation === frame.singleTicket) {
+        this.pushContext('doYield');
+        this.pushContext();
+        return;
+    }
+
+    if (state.generation > frame.singleTicket &&
+            (state.owner === null || state.owner !== this)) {
+        delete frame.singleTicket;
+        this.popContext();
+        this.pushContext();
+        return;
+    }
+
+    if (!state.owner) {
+        state.owner = this;
+        state.depth = 1;
+    } else if (state.owner === this) {
+        state.depth += 1;
+    }
+
+    delete frame.singleTicket;
+
+    this.popContext();
+
+    this.pushContext('doCompleteSingle');
+    this.context.singleState = state;
+
+    if (body) {
+        this.pushContext(body.blockSequence(), outer);
+        if (this.context) {
+            this.context.isCustomBlock = isCustomBlock;
+        }
+    }
+    this.pushContext();
+};
+
+Process.prototype.doCompleteSingle = function () {
+    var state = this.context.singleState;
+    if (state) {
+        state.depth = Math.max(0, (state.depth || 0) - 1);
+        if (state.depth === 0) {
+            state.owner = null;
+            state.generation += 1;
+        }
+    }
+    this.popContext();
+};
+
 Process.prototype.reportIfElse = function (block) {
     var inputs = this.context.inputs,
         accumulator,
@@ -3536,9 +3657,9 @@ Process.prototype.doForEach = function (upvar, list, script) {
     this.pushContext();
 };
 
-Process.prototype.doParallelForEach = function (upvar, list, script) {
+Process.prototype.doParallelForEach = function (upvar, list, script, workerCountInput) {
     //Follows the same structure as ParallelMap
-    var job, code, inputName, workerFn, p;
+    var job, code, inputName, workerFn, p, maxWorkersOverride, parallelOptions;
 
     // If a job is already running for this context, poll it
     if (this.context.accumulator) {
@@ -3563,6 +3684,23 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
     if (!list.length) {
         return;
     }
+
+    maxWorkersOverride = null;
+    if (workerCountInput !== undefined &&
+        workerCountInput !== null &&
+        workerCountInput !== '') {
+
+        var parsedWorkers = Number(workerCountInput);
+        if (!isNaN(parsedWorkers) && isFinite(parsedWorkers)) {
+            parsedWorkers = Math.floor(parsedWorkers);
+            if (parsedWorkers > 0) {
+                var maxUsableWorkers = list.length > 0 ? list.length : 1;
+                maxWorkersOverride = Math.min(parsedWorkers, maxUsableWorkers);
+            }
+        }
+    }
+
+    console.log('ParallelForEach - Worker input:', workerCountInput, 'Normalized:', maxWorkersOverride || 'default');
 
     // Ensure default JS mappings are loaded 
     if (typeof window.loadJSMappings === 'function') {
@@ -3634,7 +3772,17 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
     job = { done: false, error: null };
     this.context.accumulator = job;
 
-    p = new Parallel(list);
+    parallelOptions = maxWorkersOverride ? { maxWorkers: maxWorkersOverride } : undefined;
+    p = new Parallel(list, parallelOptions);
+    var configuredMax = typeof p.options.maxWorkers === 'number'
+        ? p.options.maxWorkers
+        : list.length;
+    var threadsToSpawn = Math.min(configuredMax, list.length);
+    console.log(
+        'ParallelForEach - Spawning',
+        threadsToSpawn,
+        'worker thread' + (threadsToSpawn === 1 ? '' : 's')
+    );
     p.map(workerFn).then(
         function (data) {
             job.done = true;     
@@ -3779,8 +3927,8 @@ Process.prototype.reportMap = function (reporter, list) {
     return this.evaluate(reporter, new List(parms));
 };
 
-Process.prototype.reportParallelMap = function (reporter, list) {
-    var job, code, inputName, workerFn, p;
+Process.prototype.reportParallelMap = function (reporter, list, workerCountInput) {
+    var job, code, inputName, workerFn, p, maxWorkersOverride, parallelOptions;
 
     if (this.context.accumulator) {
         job = this.context.accumulator;
@@ -3796,6 +3944,23 @@ Process.prototype.reportParallelMap = function (reporter, list) {
 
     this.assertType(list, 'list');
     list = list.isLinked ? list.asArray() : list.itemsArray();
+
+    maxWorkersOverride = null;
+    if (workerCountInput !== undefined &&
+        workerCountInput !== null &&
+        workerCountInput !== '') {
+
+        var parsedWorkers = Number(workerCountInput);
+        if (!isNaN(parsedWorkers) && isFinite(parsedWorkers)) {
+            parsedWorkers = Math.floor(parsedWorkers);
+            if (parsedWorkers > 0) {
+                var maxUsableWorkers = list.length > 0 ? list.length : 1;
+                maxWorkersOverride = Math.min(parsedWorkers, maxUsableWorkers);
+            }
+        }
+    }
+
+    console.log('ParallelMap - Worker input:', workerCountInput, 'Normalized:', maxWorkersOverride || 'default');
 
     if (!(reporter instanceof Context)) {
         throw new Error('Parallel map requires a ring');
@@ -3907,7 +4072,14 @@ Process.prototype.reportParallelMap = function (reporter, list) {
 
     console.log('ParallelMap - List to process:', list);
 
-    p = new Parallel(list);
+    parallelOptions = maxWorkersOverride ? { maxWorkers: maxWorkersOverride } : undefined;
+    p = new Parallel(list, parallelOptions);
+    var threadsToSpawn = Math.min(p.options.maxWorkers || 0, list.length);
+    console.log(
+        'ParallelMap - Spawning',
+        threadsToSpawn,
+        'worker thread' + (threadsToSpawn === 1 ? '' : 's')
+    );
     p.map(workerFn).then(function (data) {
         console.log('ParallelMap - Success:', data);
         job.result = data;
@@ -11051,7 +11223,8 @@ JSCompiler.prototype.compileExpression = function (block) {
     var selector = block.selector,
         inputs = block.inputs(),
         target,
-        args;
+        args,
+        body;
 
     // first check for special forms and infix operators
     switch (selector) {
@@ -11134,6 +11307,13 @@ JSCompiler.prototype.compileExpression = function (block) {
             this.compileSequence(inputs[1].evaluate()) +
             '} else {\n' +
             this.compileSequence(inputs[2].evaluate()) +
+            '}';
+    case 'doIfIsMasterThread':
+        body = inputs[0] ? this.compileSequence(inputs[0].evaluate()) : '';
+        return 'if (typeof importScripts !== "function" && !(' +
+            'typeof self !== "undefined" && typeof WorkerGlobalScope !== "undefined"' +
+            ' && self instanceof WorkerGlobalScope)) {\n' +
+            body +
             '}';
     case 'doWarp':
         // synchronous javascript is already like warp

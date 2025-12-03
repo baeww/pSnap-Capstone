@@ -57,6 +57,7 @@
         // Control
         doIf: 'if (<#1>) {\n<#2>\n}',
         doIfElse: 'if (<#1>) {\n<#2>\n} else {\n<#3>\n}',
+        doIfIsMasterThread: 'print("doIfIsMasterThread");',
         doRepeat: 'for (var i = 0; i < <#1>; i++) {\n<#2>\n}',
         doFor: 'for (var <#1> = <#2>; <#1> <= <#3>; <#1> += 1) {\n<#4>\n}',
         doReport: 'return <#1>;',

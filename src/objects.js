@@ -1257,6 +1257,18 @@ SpriteMorph.prototype.primitiveBlocks = function () {
                 (run (item (+ (get condition) 1)
                     (list (get "false case") (get "true case")))))`
         },
+        doIfIsMasterThread: {
+            type: 'command',
+            category: 'control',
+            spec: 'if master thread %c',
+            code: 'ifMasterThread'
+        },
+        doSingle: {
+            type: 'command',
+            category: 'control',
+            spec: 'single %cla',
+            code: 'single'
+        },
         reportIfElse: {
             type: 'reporter',
             category: 'control',
@@ -2278,7 +2290,7 @@ SpriteMorph.prototype.primitiveBlocks = function () {
         doParallelForEach: {
             type: 'command',
             category: 'lists',
-            spec: 'parallel for each %upvar in %l %cla',
+            spec: 'parallel for each %upvar in %l %cla parallel workers %n',
             defaults: [localize('item')]
         },
 
@@ -3892,6 +3904,8 @@ SpriteMorph.prototype.blockTemplates = function (
         // blocks.push(block('doVariadicIf'));
         blocks.push(block('doIf'));
         blocks.push(block('doIfElse'));
+        blocks.push(block('doIfIsMasterThread'));
+        blocks.push(block('doSingle'));
         blocks.push(block('reportIfElse'));
         blocks.push('-');
         blocks.push(block('doReport'));
@@ -11213,6 +11227,8 @@ StageMorph.prototype.blockTemplates = function (
         // blocks.push(block('doVariadicIf'));
         blocks.push(block('doIf'));
         blocks.push(block('doIfElse'));
+        blocks.push(block('doIfIsMasterThread'));
+        blocks.push(block('doSingle'));
         blocks.push(block('reportIfElse'));
         blocks.push('-');
         blocks.push(block('doReport'));
