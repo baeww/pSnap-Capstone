@@ -3657,8 +3657,13 @@ Process.prototype.doForEach = function (upvar, list, script) {
     this.pushContext();
 };
 
-Process.prototype.doParallelForEach = function (upvar, list, script) {
-    var job, code, inputName;
+Process.prototype.doParallelForEach = function (upvar, list, script, workerCountInput) {
+    var job, code, inputName, maxWorkersOverride;
+
+    console.log('ParallelForEach - raw args:', {
+        workerCountInput: workerCountInput,
+        contextInputs: this.context && this.context.inputs
+    });
 
     // If a job is already running for this context, poll it
     if (this.context.accumulator) {
@@ -3691,22 +3696,36 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
         return;
     }
 
-    maxWorkersOverride = null;
-    if (workerCountInput !== undefined &&
-        workerCountInput !== null &&
-        workerCountInput !== '') {
+    // Grab the worker-count input explicitly; fall back to the raw context
+    // inputs in case the primitive was invoked with an older arity.
+    var workerInputValue = workerCountInput;
+    if (workerInputValue === undefined &&
+        this.context &&
+        this.context.inputs &&
+        this.context.inputs.length > 3) {
+        workerInputValue = this.context.inputs[3];
+    }
 
-        var parsedWorkers = Number(workerCountInput);
+    maxWorkersOverride = null;
+    if (workerInputValue !== undefined &&
+        workerInputValue !== null &&
+        workerInputValue !== '') {
+
+        var parsedWorkers = Number(workerInputValue);
         if (!isNaN(parsedWorkers) && isFinite(parsedWorkers)) {
             parsedWorkers = Math.floor(parsedWorkers);
             if (parsedWorkers > 0) {
-                var maxUsableWorkers = list.length > 0 ? list.length : 1;
+                var maxUsableWorkers = items.length > 0 ? items.length : 1;
                 maxWorkersOverride = Math.min(parsedWorkers, maxUsableWorkers);
             }
         }
     }
 
-    console.log('ParallelForEach - Worker input:', workerCountInput, 'Normalized:', maxWorkersOverride || 'default');
+    var workerCount = maxWorkersOverride || items.length;
+    console.log('ParallelForEach - Worker input:', workerInputValue,
+        'Normalized:', maxWorkersOverride || 'default',
+        'Items:', items.length,
+        'WorkerCount used:', workerCount);
 
     // Ensure default JS mappings are loaded 
     if (typeof window.loadJSMappings === 'function') {
@@ -3757,6 +3776,12 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
     sharedBarrier[0] = 0; // arrival count
     sharedBarrier[1] = 0; // generation
 
+    // Build task queue and honor worker-count override (like parallel map)
+    var tasks = items.map(function (value, idx) {
+        return { value: value, index: idx };
+    });
+    // workerCount already computed above; keep tasks in sync if fewer than workers
+
     // set up a dict/map of job state
     job = {
         done: false,
@@ -3768,15 +3793,32 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
     };
 
     this.context.accumulator = job;
-	
-    //make a worker for each item. 
-    //Not sure how to pool for now. Might have to look at old cs3214 code
-    var selfProcess = this;
-    items.forEach(function (itemValue, index) {
+
+    function dispatchNext(worker) {
+        if (!tasks.length || job.done) {
+            return;
+        }
+        var task = tasks.shift();
+        var workerSlot = (typeof worker._poolId === 'number') ? worker._poolId : 0;
+        worker.postMessage({
+            type: 'run',
+            code: code,
+            inputName: inputName,
+            value: task.value,
+            totalWorkers: workerCount,
+            index: task.index,
+            workerSlot: workerSlot,
+            sharedBuffer: job.barrierBuffer
+        });
+    }
+
+    for (var w = 0; w < workerCount; w += 1) {
+        if (!tasks.length) {
+            break; // nothing to dispatch
+        }
 
         var worker = new Worker('mock_server/worker.js');
-
-        console.log("index:" + index);
+        worker._poolId = w;
 
         worker.onmessage = function (e) {
             var msg = e.data || {};
@@ -3799,6 +3841,9 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
                         snapList.isLinked = false;
                     }
                 }
+
+                // pick up the next pending task, if any
+                dispatchNext(this);
             }
 
             if (msg.type === 'error') {
@@ -3814,18 +3859,8 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
         };
 
         job.workers.push(worker);
-	
-	// here we send the worker off to run
-        worker.postMessage({
-            type: 'run',
-            code: code,
-            inputName: inputName,
-            value: itemValue,
-            totalWorkers: items.length,
-            index: index,
-            sharedBuffer: job.barrierBuffer
-        });
-    });
+        dispatchNext(worker);
+    }
 
     this.pushContext('doYield');
     this.pushContext();

@@ -1,4 +1,5 @@
-let myId = null;
+let myId = null;        // pool slot id (stable across tasks)
+let taskIndex = null;   // task index for logging/result mapping
 let totalWorkers = 0;
 let barrier = null; // Int32Array over SharedArrayBuffer
 
@@ -58,8 +59,10 @@ self.onmessage = async function (e) {
         const inputName = msg.inputName || 'value';
         const value = msg.value;
         totalWorkers = msg.totalWorkers;
-        const index = msg.index;
-        myId = index;
+        taskIndex = msg.index;
+        myId = (msg.workerSlot !== undefined && msg.workerSlot !== null)
+            ? msg.workerSlot
+            : msg.index; // fallback for older messages
 
         // set up shared barrier from SAB
         if (msg.sharedBuffer) {
@@ -68,11 +71,11 @@ self.onmessage = async function (e) {
             console.warn(`Worker ${myId}: no sharedBuffer provided; barrierWait() will be a no-op.`);
         }
 
-        console.log(`Worker ${myId}: Starting execution (Input: ${inputName}, Value: ${value})`);
+            console.log(`Worker ${myId}: Starting execution (Task #${taskIndex}, Input: ${inputName}, Value: ${value})`);
 
         try {
 	    //Fake computation time to test results
-	    const randomWaitTime = Math.floor(Math.random() * 3000); 
+	    const randomWaitTime = 0;//Math.floor(Math.random() * 3000); 
             
             console.log(`Worker ${myId}: I am "working" for ${randomWaitTime}ms before hitting the barrier...`);
             
@@ -92,11 +95,11 @@ self.onmessage = async function (e) {
             // Execute and await script
             const result = await fn(value);
 
-            console.log(`Worker ${myId}: Execution finished, sending result: ${result}`);
+            console.log(`Worker ${myId}: Execution finished (Task #${taskIndex}), sending result: ${result}`);
 
             self.postMessage({
                 type: 'done',
-                index: index,
+                index: taskIndex,
                 result: result
             });
 
