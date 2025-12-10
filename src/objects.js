@@ -2281,7 +2281,12 @@ SpriteMorph.prototype.primitiveBlocks = function () {
             spec: 'parallel for each %upvar in %l %cla',
             defaults: [localize('item')]
         },
-
+	Barrier: {
+            type: 'command',
+            category: 'control',
+            spec: 'Barrier',
+            code: 'Barrier',
+        },
         // Tables - experimental
         doShowTable: {
             dev: true,

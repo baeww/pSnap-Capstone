@@ -3537,14 +3537,18 @@ Process.prototype.doForEach = function (upvar, list, script) {
 };
 
 Process.prototype.doParallelForEach = function (upvar, list, script) {
-    //Follows the same structure as ParallelMap
-    var job, code, inputName, workerFn, p;
+    var job, code, inputName;
 
     // If a job is already running for this context, poll it
     if (this.context.accumulator) {
         job = this.context.accumulator;
 
         if (job.done) {
+            // clean up workers
+            if (job.workers) {
+                console.log("Cleaning up");
+                job.workers.forEach(function (w) { w.terminate(); });
+            }
             this.context.accumulator = null;
             if (job.error) {
                 throw job.error;
@@ -3559,8 +3563,10 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
 
     // Validate and normalize the list
     this.assertType(list, 'list');
-    list = list.isLinked ? list.asArray() : list.itemsArray();
-    if (!list.length) {
+
+    var snapList = list;
+    var items = list.isLinked ? list.asArray() : list.itemsArray();
+    if (!items.length) {
         return;
     }
 
@@ -3581,6 +3587,7 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
     try {
         if (script && script.expression && script.expression.mappedCode) {
             code = script.expression.mappedCode();
+            console.log('ParallelForEach transpiled JS:\n', code);
         } else {
             throw new Error('Ring cannot be compiled to JavaScript');
         }
@@ -3588,65 +3595,122 @@ Process.prototype.doParallelForEach = function (upvar, list, script) {
         throw new Error('Parallel for-each failed to compile script: ' + e.message);
     }
 
-    // Work out the input parameter name
-    var paramNames = Array.isArray(script.inputs) ? script.inputs : null;
-    var expressionInputNames = typeof script.expression.inputNames === 'function'
-        ? script.expression.inputNames()
-        : script.expression.inputNames;
+    inputName = 'value';
 
-    var availableNames = (paramNames && paramNames.length)
-        ? paramNames
-        : expressionInputNames;
-
-    inputName = (availableNames && availableNames.length > 0 && availableNames[0])
-        ? availableNames[0]
-        : 'value';
-
-    // Build the worker function from the transpiled JS
-    var wrappedCode =
-        "var result = (function() { return " + code + "; })();" +
-        "return result;";
-
-    try {
-        // Clean up placeholder artifacts
-        if (code.includes('<#')) {
-            console.warn('ParallelForEach - Code contains unfilled slots:', code);
-            code = code.replace(/<#\d+>/g, 'undefined');
-        }
-        if (/#\d+/.test(code)) {
-            console.warn('ParallelForEach - Code contains legacy # placeholders:', code);
-            code = code.replace(/#(\d+)/g, function (_, idx) {
-                return idx === '1' ? inputName : 'undefined';
-            });
-        }
-
-        workerFn = new Function(inputName, wrappedCode);
-    } catch (e) {
-        console.error('ParallelForEach - Function compilation error:', e);
-        // Fallbacks
-        try {
-            workerFn = new Function(inputName, "return " + code + ";");
-        } catch (e2) {
-            workerFn = new Function(inputName, code);
+    if (typeof upvar === 'string') {
+        inputName = upvar;
+    } else if (upvar && typeof upvar === 'object') {
+        if (upvar.variable && upvar.variable.name) {
+            inputName = upvar.variable.name;
+        } else if (upvar.var && upvar.var.name) {
+            inputName = upvar.var.name;
+        } else if (upvar.name) {
+            inputName = upvar.name;
         }
     }
 
-    job = { done: false, error: null };
-    this.context.accumulator = job;
+    console.log('ParallelForEach inputName =', inputName);
 
-    p = new Parallel(list);
-    p.map(workerFn).then(
-        function (data) {
-            job.done = true;     
-        },
-        function (err) {
+    // Barrier state
+    // [0] = count of arrived workers for this barrier cycle
+    // [1] = barrier generation value
+    var sharedBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+    var sharedBarrier = new Int32Array(sharedBuffer);
+    sharedBarrier[0] = 0; // arrival count
+    sharedBarrier[1] = 0; // generation
+
+    // set up a dict/map of job state
+    job = {
+        done: false,
+        error: null,
+        remaining: items.length,
+        workers: [],
+        results: new Array(items.length),
+        barrierBuffer: sharedBuffer
+    };
+
+    this.context.accumulator = job;
+	
+    //make a worker for each item. 
+    //Not sure how to pool for now. Might have to look at old cs3214 code
+    var selfProcess = this;
+    items.forEach(function (itemValue, index) {
+
+        var worker = new Worker('mock_server/worker.js');
+
+        console.log("index:" + index);
+
+        worker.onmessage = function (e) {
+            var msg = e.data || {};
+
+            if (msg.type === 'done') {
+                job.results[msg.index] = msg.result;
+
+                job.remaining -= 1;
+                console.log("Remaining: " + job.remaining);
+                if (job.remaining <= 0 && !job.done) {
+                    console.log("Writing results back to Snap!");
+                    job.done = true;
+
+                    if (snapList && typeof snapList.put === 'function') {
+                        for (var i = 0; i < job.results.length; i++) {
+                            snapList.put(job.results[i], i + 1);
+                        }
+                    } else if (snapList && snapList.contents instanceof Array) {
+                        snapList.contents = job.results.slice(0);
+                        snapList.isLinked = false;
+                    }
+                }
+            }
+
+            if (msg.type === 'error') {
+                job.error = new Error(msg.message || 'Worker error');
+                job.done = true;
+            }
+        };
+
+        worker.onerror = function (err) {
+            console.error('ParallelForEach worker error:', err);
             job.error = err;
             job.done = true;
-        }
-    );
+        };
+
+        job.workers.push(worker);
+	
+	// here we send the worker off to run
+        worker.postMessage({
+            type: 'run',
+            code: code,
+            inputName: inputName,
+            value: itemValue,
+            totalWorkers: items.length,
+            index: index,
+            sharedBuffer: job.barrierBuffer
+        });
+    });
 
     this.pushContext('doYield');
     this.pushContext();
+};
+
+Process.prototype.Barrier = function () {
+    // version with trancending variable scope, i.e. the C-slots are
+    // not full lambdas, letting you e.g. declare script variables inside
+    // them that can be accessed later outside of the C-slot
+
+	//Check if we are inside a parallel block otherwise throw error
+    if (this.context){
+        
+	}
+    else{
+    
+	}
+
+// Does this make sense to have?
+//    this.pushContext('doYield');
+//    this.pushContext();
+
+
 };
 
 Process.prototype.doFor = function (upvar, start, end, script) {

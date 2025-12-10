@@ -65,6 +65,8 @@
         
         // Misc
         // 'main': '<#1>', // Hat block mapping if needed
+	Barrier: 'await barrierWait();',
+
     };
 
     // Helper to apply mappings
@@ -146,3 +148,4 @@
         }
     };
 })();
+
