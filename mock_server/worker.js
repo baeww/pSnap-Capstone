@@ -2,6 +2,7 @@ let myId = null;        // pool slot id (stable across tasks)
 let taskIndex = null;   // task index for logging/result mapping
 let totalWorkers = 0;
 let barrier = null; // Int32Array over SharedArrayBuffer
+let __psnapSingleBuffer = null; // Int32Array over SharedArrayBuffer
 
 function __psnapGetWorkerId() {
     return typeof myId === 'number' ? myId : 0;
@@ -16,7 +17,10 @@ function __isParallelMaster() {
 }
 
 function __isParallelSingle() {
-    // For now, single is assigned to the master/first worker.
+    if (__psnapSingleBuffer) {
+        return Atomics.compareExchange(__psnapSingleBuffer, 0, 0, 1) === 0;
+    }
+    // Fallback: treat master as single if no shared flag is present.
     return __isParallelMaster();
 }
 
@@ -86,6 +90,12 @@ self.onmessage = async function (e) {
             barrier = new Int32Array(msg.sharedBuffer);
         } else {
             console.warn(`Worker ${myId}: no sharedBuffer provided; barrierWait() will be a no-op.`);
+        }
+
+        if (msg.singleBuffer) {
+            __psnapSingleBuffer = new Int32Array(msg.singleBuffer);
+        } else {
+            __psnapSingleBuffer = null;
         }
 
             console.log(`Worker ${myId}: Starting execution (Task #${taskIndex}, Input: ${inputName}, Value: ${value})`);
