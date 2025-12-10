@@ -121,13 +121,31 @@
     preStr += `
 var __psnapWorkerId = typeof __psnapWorkerId === 'number' ? __psnapWorkerId : 0;
 var __psnapWorkerCount = typeof __psnapWorkerCount === 'number' ? __psnapWorkerCount : 0;
+var __psnapSingleBuffer = null;
+function __psnapSetSingleBuffer(buf) {
+  if (!buf) return;
+  if (buf instanceof Int32Array) {
+    __psnapSingleBuffer = buf;
+    return;
+  }
+  try {
+    __psnapSingleBuffer = new Int32Array(buf);
+  } catch (_) {}
+}
 function __psnapSetMeta(meta) {
   if (!meta) return;
   if (typeof meta.workerId === 'number') { __psnapWorkerId = meta.workerId; }
   if (typeof meta.workerCount === 'number') { __psnapWorkerCount = meta.workerCount; }
+  if (meta.singleBuffer) { __psnapSetSingleBuffer(meta.singleBuffer); }
 }
 function __isParallelMaster() { return __psnapWorkerId === 0; }
-function __isParallelSingle() { return __isParallelMaster(); }
+function __isParallelSingle() {
+  if (__psnapSingleBuffer) {
+    return Atomics.compareExchange(__psnapSingleBuffer, 0, 0, 1) === 0;
+  }
+  // Fallback: default to master if no shared flag is available
+  return __isParallelMaster();
+}
 `;
 
     env = JSON.stringify(env || {});
@@ -251,7 +269,14 @@ function __isParallelSingle() { return __isParallelMaster(); }
     return this;
   };
 
-  Parallel.prototype._spawnMapWorker = function(i, cb, done, env, wrk) {
+  Parallel.prototype._spawnMapWorker = function(
+    i,
+    cb,
+    done,
+    env,
+    singleBuffer,
+    wrk
+  ) {
     const that = this;
 
     if (!wrk) wrk = that._spawnWorker(cb, env);
@@ -277,7 +302,8 @@ function __isParallelSingle() { return __isParallelMaster(); }
         __psnapMeta: {
           workerId: workerSlot,
           workerCount: workerCount,
-          taskIndex: i
+          taskIndex: i,
+          singleBuffer: singleBuffer
         },
         payload: that.data[i]
       });
@@ -296,6 +322,8 @@ function __isParallelSingle() { return __isParallelMaster(); }
   Parallel.prototype.map = function(cb, env) {
     env = extend(this.options.env, env || {});
     env.__psnapWorkerCount = Math.min(this.options.maxWorkers, this.data.length || 1);
+    const singleBuffer =
+      new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
 
     if (!this.data.length) {
       return this.spawn(cb, env);
@@ -311,7 +339,7 @@ function __isParallelSingle() { return __isParallelMaster(); }
         newOp.resolve(null, that.data);
         if (wrk) wrk.terminate();
       } else if (startedOps < that.data.length) {
-        that._spawnMapWorker(startedOps++, cb, done, env, wrk);
+        that._spawnMapWorker(startedOps++, cb, done, env, singleBuffer, wrk);
       } else if (wrk) wrk.terminate();
     }
 
@@ -324,7 +352,7 @@ function __isParallelSingle() { return __isParallelMaster(); }
           startedOps < that.data.length;
           ++startedOps
         ) {
-          that._spawnMapWorker(startedOps, cb, done, env);
+          that._spawnMapWorker(startedOps, cb, done, env, singleBuffer);
         }
       },
       err => {

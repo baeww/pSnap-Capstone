@@ -3166,9 +3166,18 @@ Process.prototype.ParallelMaster = function (body) {
 };
 
 Process.prototype.ParallelSingle = function (body) {
-    // In the interpreter, treat single like master. Worker-side gating
-    // is handled by the injected helper functions in parallel workers.
-    this.ParallelMaster(body);
+    var outer = this.context.outerContext,
+        isCustomBlock = this.context.isCustomBlock;
+
+    // In the interpreter (single-thread), just run the body once.
+    this.popContext();
+    if (body) {
+        this.pushContext(body.blockSequence(), outer);
+        if (this.context) {
+            this.context.isCustomBlock = isCustomBlock;
+        }
+    }
+    this.pushContext();
 };
 
 Process.prototype.doSingle = function (body) {
@@ -3790,6 +3799,9 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
     sharedBarrier[0] = 0; // arrival count
     sharedBarrier[1] = 0; // generation
 
+    // Single-section claim flag (0 = unclaimed, 1 = claimed)
+    var singleBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+
     // Build task queue and honor worker-count override (like parallel map)
     var tasks = items.map(function (value, idx) {
         return { value: value, index: idx };
@@ -3803,7 +3815,8 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
         remaining: items.length,
         workers: [],
         results: new Array(items.length),
-        barrierBuffer: sharedBuffer
+        barrierBuffer: sharedBuffer,
+        singleBuffer: singleBuffer
     };
 
     this.context.accumulator = job;
@@ -3822,7 +3835,8 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
             totalWorkers: workerCount,
             index: task.index,
             workerSlot: workerSlot,
-            sharedBuffer: job.barrierBuffer
+            sharedBuffer: job.barrierBuffer,
+            singleBuffer: job.singleBuffer
         });
     }
 
