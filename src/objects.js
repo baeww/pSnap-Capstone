@@ -2304,6 +2304,18 @@ SpriteMorph.prototype.primitiveBlocks = function () {
             spec: 'Barrier',
             code: 'Barrier',
         },
+        ParallelMaster: {
+            type: 'command',
+            category: 'control',
+            spec: 'parallel master %cla',
+            code: 'ParallelMaster'
+        },
+        ParallelSingle: {
+            type: 'command',
+            category: 'control',
+            spec: 'parallel single %cla',
+            code: 'ParallelSingle'
+        },
         // Tables - experimental
         doShowTable: {
             dev: true,

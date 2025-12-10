@@ -67,6 +67,8 @@
         // Misc
         // 'main': '<#1>', // Hat block mapping if needed
 	Barrier: 'await barrierWait();',
+        ParallelMaster: 'if ((typeof __isParallelMaster === "function" ? __isParallelMaster() : true)) {\n<#1>\n}',
+        ParallelSingle: 'if ((typeof __isParallelSingle === "function" ? __isParallelSingle() : (typeof __isParallelMaster === "function" ? __isParallelMaster() : true))) {\n<#1>\n}',
 
     };
 

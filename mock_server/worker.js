@@ -3,6 +3,23 @@ let taskIndex = null;   // task index for logging/result mapping
 let totalWorkers = 0;
 let barrier = null; // Int32Array over SharedArrayBuffer
 
+function __psnapGetWorkerId() {
+    return typeof myId === 'number' ? myId : 0;
+}
+
+function __psnapGetWorkerCount() {
+    return typeof totalWorkers === 'number' ? totalWorkers : 0;
+}
+
+function __isParallelMaster() {
+    return __psnapGetWorkerId() === 0;
+}
+
+function __isParallelSingle() {
+    // For now, single is assigned to the master/first worker.
+    return __isParallelMaster();
+}
+
 // Atomics-based barrier
 async function barrierWait() {
     //stop if no barrier
