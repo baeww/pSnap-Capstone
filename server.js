@@ -15,13 +15,17 @@ const MIME_TYPES = {
 
 http.createServer((req, res) => {
   console.log(`Requested: ${req.url}`);
-  
+
   // headers for Shared Array Buffer
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
 
+  // Strip query/hash so cache-busting ?version=... URLs resolve to real files
+  const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
+  const pathname = parsedUrl.pathname;
+
   // Basic Static File Serving Logic
-  let filePath = '.' + req.url;
+  let filePath = '.' + pathname;
   if (filePath === './') filePath = './index.html';
 
   const extname = path.extname(filePath);
