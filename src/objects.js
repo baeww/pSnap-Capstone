@@ -1600,6 +1600,11 @@ SpriteMorph.prototype.primitiveBlocks = function () {
             category: 'sensing',
             spec: 'timer'
         },
+        reportExecutionTime: {
+            type: 'reporter',
+            category: 'sensing',
+            spec: 'execution time %repRing'
+        },
         getTimer: {
             type: 'reporter',
             category: 'sensing',
@@ -3998,6 +4003,7 @@ SpriteMorph.prototype.blockTemplates = function (
         blocks.push(block('doResetTimer'));
         blocks.push(watcherToggle('getTimer'));
         blocks.push(block('getTimer'));
+        blocks.push(block('reportExecutionTime'));
         blocks.push(block('reportDate'));
         blocks.push('-');
         blocks.push(block('reportAttributeOf'));

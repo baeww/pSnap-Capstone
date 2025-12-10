@@ -8553,6 +8553,21 @@ Process.prototype.reportTimer = function () {
     return 0;
 };
 
+Process.prototype.reportExecutionTime = function (aContext) {
+    if (!this.context.startTime) {
+        this.context.startTime = Date.now();
+        this.pushContext();
+        this.evaluate(
+            aContext,
+            new List([this.context.continuation()]),
+            true
+        );
+    } else {
+        var endTime = Date.now();
+        return (Date.now() - this.context.startTime) / 1000;
+    }
+};
+
 // Process Dates and times in Snap
 Process.prototype.reportDate = function (datefn) {
     var currDate, func, result,
