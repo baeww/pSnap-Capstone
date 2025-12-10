@@ -117,14 +117,27 @@
       }
     }
 
+    // Helpers to identify worker id / count inside parallel workers
+    preStr += `
+var __psnapWorkerId = typeof __psnapWorkerId === 'number' ? __psnapWorkerId : 0;
+var __psnapWorkerCount = typeof __psnapWorkerCount === 'number' ? __psnapWorkerCount : 0;
+function __psnapSetMeta(meta) {
+  if (!meta) return;
+  if (typeof meta.workerId === 'number') { __psnapWorkerId = meta.workerId; }
+  if (typeof meta.workerCount === 'number') { __psnapWorkerCount = meta.workerCount; }
+}
+function __isParallelMaster() { return __psnapWorkerId === 0; }
+function __isParallelSingle() { return __isParallelMaster(); }
+`;
+
     env = JSON.stringify(env || {});
 
     const ns = this.options.envNamespace;
 
     if (isNode) {
-      return `${preStr}process.on("message", function(e) {global.${ns} = ${env};process.send(JSON.stringify((${cb.toString()})(JSON.parse(e).data)))})`;
+      return `${preStr}process.on("message", function(e) {global.${ns} = ${env};var _data = JSON.parse(e).data;var _meta = _data && _data.__psnapMeta;__psnapSetMeta(_meta);var _payload = _meta ? _data.payload : _data;process.send(JSON.stringify((${cb.toString()})(_payload)))})`;
     }
-    return `${preStr}self.onmessage = function(e) {var global = {}; global.${ns} = ${env};self.postMessage((${cb.toString()})(e.data))}`;
+    return `${preStr}self.onmessage = function(e) {var global = {}; global.${ns} = ${env};var _meta = e.data && e.data.__psnapMeta;__psnapSetMeta(_meta);var _payload = _meta ? e.data.payload : e.data;self.postMessage((${cb.toString()})(_payload))}`;
   };
 
   Parallel.prototype.require = function() {
@@ -242,6 +255,14 @@
     const that = this;
 
     if (!wrk) wrk = that._spawnWorker(cb, env);
+    if (wrk && wrk._poolId === undefined) {
+      wrk._poolId = i;
+    }
+
+    const workerSlot =
+      wrk && typeof wrk._poolId === 'number' ? wrk._poolId : i;
+    const workerCount =
+      (env && env.__psnapWorkerCount) || that.options.maxWorkers || 0;
 
     if (wrk !== undefined) {
       wrk.onmessage = function(msg) {
@@ -252,7 +273,14 @@
         wrk.terminate();
         done(e);
       };
-      wrk.postMessage(that.data[i]);
+      wrk.postMessage({
+        __psnapMeta: {
+          workerId: workerSlot,
+          workerCount: workerCount,
+          taskIndex: i
+        },
+        payload: that.data[i]
+      });
     } else if (that.options.synchronous) {
       setImmediate(() => {
         that.data[i] = cb(that.data[i]);
@@ -267,6 +295,7 @@
 
   Parallel.prototype.map = function(cb, env) {
     env = extend(this.options.env, env || {});
+    env.__psnapWorkerCount = Math.min(this.options.maxWorkers, this.data.length || 1);
 
     if (!this.data.length) {
       return this.spawn(cb, env);

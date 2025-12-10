@@ -3151,6 +3151,26 @@ Process.prototype.doIfIsMasterThread = function () {
     this.pushContext();
 };
 
+Process.prototype.ParallelMaster = function (body) {
+    var outer = this.context.outerContext,
+        isCustomBlock = this.context.isCustomBlock;
+
+    this.popContext();
+    if (this.isMasterThread() && body) {
+        this.pushContext(body.blockSequence(), outer);
+        if (this.context) {
+            this.context.isCustomBlock = isCustomBlock;
+        }
+    }
+    this.pushContext();
+};
+
+Process.prototype.ParallelSingle = function (body) {
+    // In the interpreter, treat single like master. Worker-side gating
+    // is handled by the injected helper functions in parallel workers.
+    this.ParallelMaster(body);
+};
+
 Process.prototype.doSingle = function (body) {
     var frame = this.context,
         block = frame.expression instanceof BlockMorph ?
