@@ -3660,11 +3660,6 @@ Process.prototype.doForEach = function (upvar, list, script) {
 Process.prototype.doParallelForEach = function (upvar, list, script, workerCountInput) {
     var job, code, inputName, maxWorkersOverride;
 
-    console.log('ParallelForEach - raw args:', {
-        workerCountInput: workerCountInput,
-        contextInputs: this.context && this.context.inputs
-    });
-
     // If a job is already running for this context, poll it
     if (this.context.accumulator) {
         job = this.context.accumulator;
@@ -3672,7 +3667,6 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
         if (job.done) {
             // clean up workers
             if (job.workers) {
-                console.log("Cleaning up");
                 job.workers.forEach(function (w) { w.terminate(); });
             }
             this.context.accumulator = null;
