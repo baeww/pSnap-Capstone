@@ -2198,6 +2198,11 @@ SpriteMorph.prototype.primitiveBlocks = function () {
             category: 'lists',
             spec: 'parallel map %repRing over %l parallel workers %n',
         },
+        reportParallelMapReduce: {
+            type: 'reporter',
+            category: 'lists',
+            spec: 'parallel map reduce %repRing over %l parallel workers %n',
+        },
         reportKeep: {
             type: 'reporter',
             category: 'lists',
@@ -4135,6 +4140,7 @@ SpriteMorph.prototype.blockTemplates = function (
         blocks.push(block('reportMap'));
 
         blocks.push(block('reportParallelMap'));
+        blocks.push(block('reportParallelMapReduce'));
 
         blocks.push(block('reportKeep'));
         blocks.push(block('reportFindFirst'));

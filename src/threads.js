@@ -4211,6 +4211,257 @@ Process.prototype.reportParallelMap = function (reporter, list, workerCountInput
     this.pushContext();
 };
 
+Process.prototype.reportParallelMapReduce = function (operator, list, workerCountInput) {
+    var job,
+        code,
+        sanitizedCode,
+        inputName,
+        mapFn,
+        reduceFn,
+        p,
+        maxWorkersOverride,
+        parallelOptions,
+        paramNames,
+        expressionInputNames,
+        availableNames,
+        hasReducerArity;
+
+    if (this.context.accumulator) {
+        job = this.context.accumulator;
+        if (job.done) {
+            this.context.accumulator = null;
+            if (job.error) {
+                throw job.error;
+            }
+            return job.result;
+        }
+        this.pushContext('doYield');
+        this.pushContext();
+        return;
+    }
+
+    this.assertType(list, 'list');
+    list = list.isLinked ? list.asArray() : list.itemsArray();
+
+    if (!list.length) {
+        return 0;
+    }
+
+    maxWorkersOverride = null;
+    if (workerCountInput !== undefined &&
+        workerCountInput !== null &&
+        workerCountInput !== '') {
+
+        var parsedWorkers = Number(workerCountInput);
+        if (!isNaN(parsedWorkers) && isFinite(parsedWorkers)) {
+            parsedWorkers = Math.floor(parsedWorkers);
+            if (parsedWorkers > 0) {
+                var maxUsableWorkers = list.length > 0 ? list.length : 1;
+                maxWorkersOverride = Math.min(parsedWorkers, maxUsableWorkers);
+            }
+        }
+    }
+
+    console.log(
+        'ParallelMapReduce - Worker input:',
+        workerCountInput,
+        'Normalized:',
+        maxWorkersOverride || 'default'
+    );
+
+    if (!(operator instanceof Context)) {
+        throw new Error('Parallel map reduce requires a ring');
+    }
+
+    if (typeof window.loadJSMappings === 'function') {
+        if (!StageMorph.prototype.codeMappings['reportSum'] ||
+            StageMorph.prototype.codeMappings['reportSum'].indexOf('%') !== -1) {
+            console.log('ParallelMapReduce - Loading default JS mappings...');
+            window.loadJSMappings();
+        }
+    } else {
+        console.warn('ParallelMapReduce - window.loadJSMappings is not a function. Check if js_mappings.js is loaded.');
+    }
+
+    try {
+        if (operator.expression && operator.expression.mappedCode) {
+            code = operator.expression.mappedCode();
+            console.log('ParallelMapReduce - Transpiled Code:', code);
+        } else {
+            throw new Error('Ring cannot be compiled to JavaScript');
+        }
+    } catch (e) {
+        throw new Error('Parallel map reduce failed to compile operator: ' + e.message);
+    }
+
+    paramNames = Array.isArray(operator.inputs) ? operator.inputs : null;
+    expressionInputNames = typeof operator.expression.inputNames === 'function'
+        ? operator.expression.inputNames()
+        : operator.expression.inputNames;
+    availableNames = paramNames && paramNames.length
+        ? paramNames
+        : expressionInputNames;
+
+    inputName = (availableNames && availableNames.length > 0 && availableNames[0])
+        ? availableNames[0]
+        : 'value';
+    hasReducerArity = availableNames && availableNames.length > 1;
+
+    sanitizedCode = code;
+    if (sanitizedCode.includes('<#')) {
+        console.warn('ParallelMapReduce - Code contains unfilled slots:', sanitizedCode);
+        sanitizedCode = sanitizedCode.replace(/<#\d+>/g, 'undefined');
+    }
+    if (/#\d+/.test(sanitizedCode)) {
+        console.warn('ParallelMapReduce - Code contains legacy # placeholders:', sanitizedCode);
+        sanitizedCode = sanitizedCode.replace(/#(\d+)/g, function (_, idx) {
+            if (idx === '1') {
+                return hasReducerArity ? (availableNames[0] || 'acc') : inputName;
+            }
+            if (idx === '2') {
+                return hasReducerArity ? (availableNames[1] || 'value') : 'undefined';
+            }
+            if (idx === '3') {
+                return 'idx';
+            }
+            if (idx === '4') {
+                return 'list';
+            }
+            return 'undefined';
+        });
+        console.log('ParallelMapReduce - After legacy placeholder fix:', sanitizedCode);
+    }
+
+    // Compile reducer (2-arg) from the ring; fallback to addition
+    try {
+        reduceFn = new Function(
+            availableNames[0] || 'acc',
+            availableNames[1] || 'value',
+            availableNames[2] || 'idx',
+            availableNames[3] || 'list',
+            "return " + sanitizedCode + ";"
+        );
+    } catch (e) {
+        console.error('ParallelMapReduce - Reducer compilation error:', e);
+    }
+    if (!reduceFn) {
+        reduceFn = function (acc, value) {
+            if (acc === undefined) {
+                return value;
+            }
+            return acc + value;
+        };
+    }
+
+    // Mapper now reduces a chunk locally to support parallel reduction.
+    // Build the reducer inline so the worker blob is self-contained (no free vars).
+    var accVar = availableNames[0] || 'acc';
+    var valVar = availableNames[1] || 'value';
+
+    var mapWrapperSrc =
+        "console.log('ParallelReduce chunk start, length:', chunk.length);" +
+        "var __acc;" +
+        "for (var __i = 0; __i < chunk.length; __i++) {" +
+        "  var " + valVar + " = chunk[__i];" +
+        "  var " + accVar + " = __acc;" +
+        "  var __numA = Number(" + accVar + ");" +
+        "  var __numB = Number(" + valVar + ");" +
+        "  if (!isNaN(__numA) && isFinite(__numA) && !isNaN(__numB) && isFinite(__numB)) {" +
+        "    " + accVar + " = __numA; " + valVar + " = __numB;" +
+        "  }" +
+        "  if (__acc === undefined) {" +
+        "    __acc = " + valVar + ";" +
+        "  } else {" +
+        "    __acc = (" + sanitizedCode + ");" +
+        "  }" +
+        "}" +
+        "console.log('ParallelReduce chunk end =>', __acc);" +
+        "return __acc;";
+
+    try {
+        mapFn = new Function('chunk', mapWrapperSrc);
+    } catch (e) {
+        console.warn('ParallelMapReduce - Chunk reducer map build failed, fallback to identity chunk[0].');
+        mapFn = function (chunk) {
+            if (!chunk || !chunk.length) { return undefined; }
+            return chunk.reduce(function (a, b) {
+                var numA = Number(a);
+                var numB = Number(b);
+                if (!isNaN(numA) && isFinite(numA) && !isNaN(numB) && isFinite(numB)) {
+                    a = numA; b = numB;
+                }
+                return reduceFn(a, b);
+            });
+        };
+    }
+
+    // Build chunked work for parallel reduction
+    var chunks = [];
+    var workerCount = maxWorkersOverride || Math.min(list.length, (p && p.options && p.options.maxWorkers) || (Parallel && Parallel.defaultMaxWorkers) || 1);
+    workerCount = Math.max(1, Math.min(workerCount, list.length));
+    var chunkSize = Math.ceil(list.length / workerCount);
+    for (var c = 0; c < list.length; c += chunkSize) {
+        chunks.push(list.slice(c, c + chunkSize));
+    }
+
+    job = { done: false, result: null, error: null };
+    this.context.accumulator = job;
+
+    console.log('ParallelMapReduce - List to process:', list, 'chunked into', chunks.length, 'chunks of ~', chunkSize);
+
+    parallelOptions = maxWorkersOverride ? { maxWorkers: maxWorkersOverride } : undefined;
+    p = new Parallel(chunks, parallelOptions);
+    var threadsToSpawn = Math.min(p.options.maxWorkers || 0, chunks.length);
+    console.log(
+        'ParallelMapReduce - Spawning',
+        threadsToSpawn,
+        'worker thread' + (threadsToSpawn === 1 ? '' : 's')
+    );
+
+    // Pass the mapper directly so it serializes without free variables
+    p.map(mapFn).then(function (mapped) {
+        try {
+            console.log('ParallelMapReduce - Chunk results:', mapped);
+            // Final reduction on main thread over chunk results
+            var reduced = mapped.reduce(function (acc, value, idx) {
+                if (acc === undefined) {
+                    return value;
+                }
+
+                var a = acc;
+                var b = value;
+
+                var numA = Number(a);
+                var numB = Number(b);
+                if (!isNaN(numA) && isFinite(numA) && !isNaN(numB) && isFinite(numB)) {
+                    a = numA;
+                    b = numB;
+                }
+
+                return reduceFn(a, b, idx, mapped);
+            }, undefined);
+
+            if (reduced === undefined) {
+                reduced = 0;
+            }
+            job.result = reduced;
+            job.done = true;
+            console.log('ParallelMapReduce - Reduced result:', reduced);
+        } catch (reduceErr) {
+            console.error('ParallelMapReduce - Reduce failed:', reduceErr);
+            job.error = reduceErr;
+            job.done = true;
+        }
+    }, function (err) {
+        console.error('ParallelMapReduce - Error:', err);
+        job.error = err;
+        job.done = true;
+    });
+
+    this.pushContext('doYield');
+    this.pushContext();
+};
+
 Process.prototype.reportKeep = function (predicate, list) {
     // Filter - answer a new list containing the items of the list for which
     // the predicate evaluates TRUE.
