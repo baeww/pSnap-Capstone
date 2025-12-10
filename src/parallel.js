@@ -119,34 +119,34 @@
 
     // Helpers to identify worker id / count inside parallel workers
     preStr += `
-var __psnapWorkerId = typeof __psnapWorkerId === 'number' ? __psnapWorkerId : 0;
-var __psnapWorkerCount = typeof __psnapWorkerCount === 'number' ? __psnapWorkerCount : 0;
-var __psnapSingleBuffer = null;
-function __psnapSetSingleBuffer(buf) {
-  if (!buf) return;
-  if (buf instanceof Int32Array) {
-    __psnapSingleBuffer = buf;
-    return;
-  }
-  try {
-    __psnapSingleBuffer = new Int32Array(buf);
-  } catch (_) {}
-}
-function __psnapSetMeta(meta) {
-  if (!meta) return;
-  if (typeof meta.workerId === 'number') { __psnapWorkerId = meta.workerId; }
-  if (typeof meta.workerCount === 'number') { __psnapWorkerCount = meta.workerCount; }
-  if (meta.singleBuffer) { __psnapSetSingleBuffer(meta.singleBuffer); }
-}
-function __isParallelMaster() { return __psnapWorkerId === 0; }
-function __isParallelSingle() {
-  if (__psnapSingleBuffer) {
-    return Atomics.compareExchange(__psnapSingleBuffer, 0, 0, 1) === 0;
-  }
-  // Fallback: default to master if no shared flag is available
-  return __isParallelMaster();
-}
-`;
+      var __psnapWorkerId = typeof __psnapWorkerId === 'number' ? __psnapWorkerId : 0;
+      var __psnapWorkerCount = typeof __psnapWorkerCount === 'number' ? __psnapWorkerCount : 0;
+      var __psnapSingleBuffer = null;
+      function __psnapSetSingleBuffer(buf) {
+        if (!buf) return;
+        if (buf instanceof Int32Array) {
+          __psnapSingleBuffer = buf;
+          return;
+        }
+        try {
+          __psnapSingleBuffer = new Int32Array(buf);
+        } catch (_) {}
+      }
+      function __psnapSetMeta(meta) {
+        if (!meta) return;
+        if (typeof meta.workerId === 'number') { __psnapWorkerId = meta.workerId; }
+        if (typeof meta.workerCount === 'number') { __psnapWorkerCount = meta.workerCount; }
+        if (meta.singleBuffer) { __psnapSetSingleBuffer(meta.singleBuffer); }
+      }
+      function __isParallelMaster() { return __psnapWorkerId === 0; }
+      function __isParallelSingle() {
+        if (__psnapSingleBuffer) {
+          return Atomics.compareExchange(__psnapSingleBuffer, 0, 0, 1) === 0;
+        }
+        // Fallback: default to master if no shared flag is available
+        return __isParallelMaster();
+      }
+    `;
 
     env = JSON.stringify(env || {});
 
