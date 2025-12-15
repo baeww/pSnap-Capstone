@@ -3991,8 +3991,10 @@ Process.prototype.reportMap = function (reporter, list) {
                 idx : 1,
                 target : new List(),
                 end : null,
-                remaining : list.length()
+                remaining : list.length(),
+                mapStart : performance.now()
             };
+            console.log('Map - Execution started at', this.context.accumulator.mapStart);
             this.context.accumulator.target.isLinked = true;
             this.context.accumulator.end = this.context.accumulator.target;
         } else if (this.context.inputs.length > 2) {
@@ -4004,6 +4006,10 @@ Process.prototype.reportMap = function (reporter, list) {
             this.context.accumulator.remaining -= 1;
         }
         if (this.context.accumulator.remaining === 0) {
+            console.log(
+                'Map - Execution time (ms):',
+                performance.now() - this.context.accumulator.mapStart
+            );
             this.context.accumulator.end.rest = list.cons(
                 this.context.inputs[2]
             ).cdr();
@@ -4019,10 +4025,16 @@ Process.prototype.reportMap = function (reporter, list) {
         if (this.context.accumulator === null) {
             this.assertType(list, 'list');
             this.context.accumulator = [];
+            this.context.accumulator.mapStart = performance.now();
+            console.log('Map - Execution started at', this.context.accumulator.mapStart);
         } else if (this.context.inputs.length > 2) {
             this.context.accumulator.push(this.context.inputs.pop());
         }
         if (this.context.accumulator.length === list.length()) {
+            console.log(
+                'Map - Execution time (ms):',
+                performance.now() - this.context.accumulator.mapStart
+            );
             this.returnValueToParentContext(
                 new List(this.context.accumulator)
             );
@@ -4190,6 +4202,8 @@ Process.prototype.reportParallelMap = function (reporter, list, workerCountInput
     console.log('ParallelMap - List to process:', list);
 
     parallelOptions = maxWorkersOverride ? { maxWorkers: maxWorkersOverride } : undefined;
+    var mapStart = performance.now();
+    console.log('ParallelMap - Map execution started at', mapStart);
     p = new Parallel(list, parallelOptions);
     var threadsToSpawn = Math.min(p.options.maxWorkers || 0, list.length);
     console.log(
@@ -4199,10 +4213,12 @@ Process.prototype.reportParallelMap = function (reporter, list, workerCountInput
     );
     p.map(workerFn).then(function (data) {
         console.log('ParallelMap - Success:', data);
+        console.log('ParallelMap - Map execution time (ms):', performance.now() - mapStart);
         job.result = data;
         job.done = true;
     }, function (err) {
         console.error('ParallelMap - Error:', err);
+        console.log('ParallelMap - Map execution time (ms):', performance.now() - mapStart);
         job.error = err;
         job.done = true;
     });
