@@ -60,9 +60,11 @@
         doIfIsMasterThread: 'print("doIfIsMasterThread");',
         doRepeat: 'for (var i = 0; i < <#1>; i++) {\n<#2>\n}',
         doFor: 'for (var <#1> = <#2>; <#1> <= <#3>; <#1> += 1) {\n<#4>\n}',
+        doWait: 'await new Promise(resolve => setTimeout(resolve, <#1> * 1000));',
         doReport: 'return <#1>;',
         doSayFor: 'console.log(<#1>);', // say ... for ... secs
         doSay: 'console.log(<#1>);',     // say ...
+        
         
         // Misc
         // 'main': '<#1>', // Hat block mapping if needed

@@ -3764,6 +3764,20 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
     }
 
     // Compile the script body into JS using the transpiler
+    console.log('ParallelForEach - Pre-transpile info:', {
+        selector: script && script.expression && script.expression.selector,
+        hasMappedCode: !!(script && script.expression && script.expression.mappedCode),
+        inputNames: script && script.expression && (
+            typeof script.expression.inputNames === 'function'
+                ? script.expression.inputNames()
+                : script.expression.inputNames
+        ),
+        rawInputs: script && script.expression && (
+            typeof script.expression.inputs === 'function'
+                ? script.expression.inputs()
+                : script.expression.inputs
+        )
+    });
     try {
         if (script && script.expression && script.expression.mappedCode) {
             code = script.expression.mappedCode();
@@ -4057,11 +4071,20 @@ Process.prototype.reportMap = function (reporter, list) {
 };
 
 Process.prototype.reportParallelMap = function (reporter, list, workerCountInput) {
-    var job, code, inputName, workerFn, p, maxWorkersOverride, parallelOptions;
+    var job,
+        code,
+        inputName,
+        maxWorkersOverride,
+        workerInputValue,
+        items,
+        mapStart;
 
     if (this.context.accumulator) {
         job = this.context.accumulator;
         if (job.done) {
+            if (job.workers) {
+                job.workers.forEach(function (w) { w.terminate(); });
+            }
             this.context.accumulator = null;
             if (job.error) throw job.error;
             return new List(job.result);
@@ -4072,24 +4095,35 @@ Process.prototype.reportParallelMap = function (reporter, list, workerCountInput
     }
 
     this.assertType(list, 'list');
-    list = list.isLinked ? list.asArray() : list.itemsArray();
+    items = list.isLinked ? list.asArray() : list.itemsArray();
+    if (!items.length) {
+        return new List();
+    }
+
+    workerInputValue = workerCountInput;
+    if (workerInputValue === undefined &&
+        this.context &&
+        this.context.inputs &&
+        this.context.inputs.length > 2) {
+        workerInputValue = this.context.inputs[2];
+    }
 
     maxWorkersOverride = null;
-    if (workerCountInput !== undefined &&
-        workerCountInput !== null &&
-        workerCountInput !== '') {
+    if (workerInputValue !== undefined &&
+        workerInputValue !== null &&
+        workerInputValue !== '') {
 
-        var parsedWorkers = Number(workerCountInput);
+        var parsedWorkers = Number(workerInputValue);
         if (!isNaN(parsedWorkers) && isFinite(parsedWorkers)) {
             parsedWorkers = Math.floor(parsedWorkers);
             if (parsedWorkers > 0) {
-                var maxUsableWorkers = list.length > 0 ? list.length : 1;
+                var maxUsableWorkers = items.length > 0 ? items.length : 1;
                 maxWorkersOverride = Math.min(parsedWorkers, maxUsableWorkers);
             }
         }
     }
 
-    console.log('ParallelMap - Worker input:', workerCountInput, 'Normalized:', maxWorkersOverride || 'default');
+    // console.log('ParallelMap - Worker input:', workerInputValue, 'Normalized:', maxWorkersOverride || 'default');
 
     if (!(reporter instanceof Context)) {
         throw new Error('Parallel map requires a ring');
@@ -4098,56 +4132,56 @@ Process.prototype.reportParallelMap = function (reporter, list, workerCountInput
     // Debugging Mappings and Selector
     if (reporter.expression) {
         var selector = reporter.expression.selector;
-        console.log('ParallelMap - Reporter Selector:', selector);
-        console.log('ParallelMap - Mappings available for selector?', !!StageMorph.prototype.codeMappings[selector]);
-        console.log('ParallelMap - Current Mapping:', StageMorph.prototype.codeMappings[selector]);
+        // console.log('ParallelMap - Reporter Selector:', selector);
+        // console.log('ParallelMap - Mappings available for selector?', !!StageMorph.prototype.codeMappings[selector]);
+        // console.log('ParallelMap - Current Mapping:', StageMorph.prototype.codeMappings[selector]);
         
         // If mapping is missing, let's see what keys ARE there
         if (!StageMorph.prototype.codeMappings[selector]) {
-             console.log('ParallelMap - All Available Mappings keys:', Object.keys(StageMorph.prototype.codeMappings));
+            //  console.log('ParallelMap - All Available Mappings keys:', Object.keys(StageMorph.prototype.codeMappings));
         }
     }
 
     // Ensure default JS mappings are loaded if not already present
     if (typeof window.loadJSMappings === 'function') {
         if (!StageMorph.prototype.codeMappings['reportSum'] || StageMorph.prototype.codeMappings['reportSum'].indexOf('%') !== -1) {
-            console.log('ParallelMap - Loading default JS mappings...');
+            // console.log('ParallelMap - Loading default JS mappings...');
             window.loadJSMappings();
             // Re-check after loading
             if (reporter.expression) {
-                 console.log('ParallelMap - Post-Load Mapping:', StageMorph.prototype.codeMappings[reporter.expression.selector]);
+                //  console.log('ParallelMap - Post-Load Mapping:', StageMorph.prototype.codeMappings[reporter.expression.selector]);
             }
         }
     } else {
-        console.warn('ParallelMap - window.loadJSMappings is not a function. Check if js_mappings.js is loaded.');
+        // console.warn('ParallelMap - window.loadJSMappings is not a function. Check if js_mappings.js is loaded.');
     }
 
     try {
         if (reporter.expression && reporter.expression.mappedCode) {
-            console.log('ParallelMap - Compiling reporter:', reporter.expression.selector);
-            console.log('ParallelMap - Reporter expression:', reporter.expression);
+            // console.log('ParallelMap - Compiling reporter:', reporter.expression.selector);
+            // console.log('ParallelMap - Reporter expression:', reporter.expression);
 
             code = reporter.expression.mappedCode();
-            console.log('ParallelMap - Transpiled Code:', code);
+            // console.log('ParallelMap - Transpiled Code:', code);
             if (!code) {
-                console.warn('ParallelMap - Warning: Transpiled code is empty!');
+                // console.warn('ParallelMap - Warning: Transpiled code is empty!');
             }
         } else {
-            throw new Error('Ring cannot be compiled to JavaScript');
+            // throw new Error('Ring cannot be compiled to JavaScript');
         }
     } catch (e) {
-        throw new Error('Parallel map failed to compile reporter: ' + e.message);
+        // throw new Error('Parallel map failed to compile reporter: ' + e.message);
     }
 
     var paramNames = Array.isArray(reporter.inputs) ? reporter.inputs : null;
 
-    console.log('ParallelMap - Context inputs (parameter names):', paramNames);
+    // console.log('ParallelMap - Context inputs (parameter names):', paramNames);
 
     var expressionInputNames = typeof reporter.expression.inputNames === 'function'
         ? reporter.expression.inputNames()
         : reporter.expression.inputNames;
 
-    console.log('ParallelMap - expression inputNames:', expressionInputNames);
+    // console.log('ParallelMap - expression inputNames:', expressionInputNames);
 
     var availableNames = paramNames && paramNames.length
         ? paramNames
@@ -4157,71 +4191,113 @@ Process.prototype.reportParallelMap = function (reporter, list, workerCountInput
         ? availableNames[0]
         : 'value';
 
-    console.log('ParallelMap - Input Name:', inputName);
+    // console.log('ParallelMap - Input Name:', inputName);
 
-    // Wrap the worker function to log arguments and return values
-    var wrappedCode = "console.log('Worker execution input:', " + inputName + "); " +
-                      "var result = (function() { return " + code + "; })(); " +
-                      "console.log('Worker execution result:', result); " +
-                      "return result;";
-    
     try {
-        // Fix common transpilation issues:
-        // 1. If code still contains <#n> tags, it means inputs weren't filled (empty slots).
-        //    Replace them with 'undefined' or throw helpful error.
-        if (code.includes('<#')) {
-             console.warn('ParallelMap - Code contains unfilled slots:', code);
-             // Attempt to clean up obvious empty slots if they are just placeholders
-             code = code.replace(/<#\d+>/g, 'undefined');
+        if (typeof code === 'string' && code.includes('<#')) {
+            console.warn('ParallelMap - Code contains unfilled slots:', code);
+            code = code.replace(/<#\d+>/g, 'undefined');
         }
-        if (/#\d+/.test(code)) {
+        if (typeof code === 'string' && /#\d+/.test(code)) {
             console.warn('ParallelMap - Code contains legacy # placeholders:', code);
             code = code.replace(/#(\d+)/g, function (_, idx) {
                 return idx === '1' ? inputName : 'undefined';
             });
             console.log('ParallelMap - After legacy placeholder fix:', code);
         }
-        
-        workerFn = new Function(inputName, wrappedCode);
-        console.log('ParallelMap - Worker Function String:', workerFn.toString());
     } catch (e) {
-        console.error('ParallelMap - Function compilation error:', e);
-        // Fallback if wrapping fails or code is a block not an expression
-        console.warn('ParallelMap - Failed to wrap with debug logs, using raw code');
-        try {
-            workerFn = new Function(inputName, "return " + code + ";");
-        } catch (e2) {
-             // If it's a statement block, not an expression
-             workerFn = new Function(inputName, code);
-        }
+        // Ignore placeholder cleanup errors
     }
 
-    job = { done: false, result: null, error: null };
+    var runnableCode = code || '';
+    if (runnableCode && runnableCode.indexOf('return') === -1) {
+        runnableCode = inputName + ' = (' + runnableCode + ');';
+    }
+    if (!runnableCode) {
+        runnableCode = inputName + ';';
+    }
+
+    var workerCount = maxWorkersOverride || items.length;
+    if (workerCount < 1) {
+        workerCount = 1;
+    }
+
+    var tasks = items.map(function (value, idx) {
+        return { value: value, index: idx };
+    });
+
+    job = {
+        done: false,
+        result: null,
+        error: null,
+        remaining: items.length,
+        workers: [],
+        results: new Array(items.length)
+    };
     this.context.accumulator = job;
 
-    console.log('ParallelMap - List to process:', list);
+    console.log('ParallelMap - List to process:', items);
 
-    parallelOptions = maxWorkersOverride ? { maxWorkers: maxWorkersOverride } : undefined;
-    var mapStart = performance.now();
+    mapStart = performance.now();
     console.log('ParallelMap - Map execution started at', mapStart);
-    p = new Parallel(list, parallelOptions);
-    var threadsToSpawn = Math.min(p.options.maxWorkers || 0, list.length);
-    console.log(
-        'ParallelMap - Spawning',
-        threadsToSpawn,
-        'worker thread' + (threadsToSpawn === 1 ? '' : 's')
-    );
-    p.map(workerFn).then(function (data) {
-        console.log('ParallelMap - Success:', data);
-        console.log('ParallelMap - Map execution time (ms):', performance.now() - mapStart);
-        job.result = data;
-        job.done = true;
-    }, function (err) {
-        console.error('ParallelMap - Error:', err);
-        console.log('ParallelMap - Map execution time (ms):', performance.now() - mapStart);
-        job.error = err;
-        job.done = true;
-    });
+
+    function dispatchNext(worker) {
+        if (!tasks.length || job.done) {
+            return;
+        }
+        var task = tasks.shift();
+        var workerSlot = (typeof worker._poolId === 'number') ? worker._poolId : 0;
+        worker.postMessage({
+            type: 'run',
+            code: runnableCode,
+            inputName: inputName,
+            value: task.value,
+            totalWorkers: workerCount,
+            index: task.index,
+            workerSlot: workerSlot
+        });
+    }
+
+    for (var w = 0; w < workerCount; w += 1) {
+        if (!tasks.length) {
+            break;
+        }
+
+        var worker = new Worker('mock_server/worker.js');
+        worker._poolId = w;
+
+        worker.onmessage = function (e) {
+            var msg = e.data || {};
+
+            if (msg.type === 'done') {
+                job.results[msg.index] = msg.result;
+                job.remaining -= 1;
+
+                if (job.remaining <= 0 && !job.done) {
+                    console.log('ParallelMap - Success:', job.results);
+                    console.log('ParallelMap - Map execution time (ms):', performance.now() - mapStart);
+                    job.result = job.results.slice(0);
+                    job.done = true;
+                }
+
+                dispatchNext(this);
+            }
+
+            if (msg.type === 'error') {
+                job.error = new Error(msg.message || 'Worker error');
+                job.done = true;
+            }
+        };
+
+        worker.onerror = function (err) {
+            console.error('ParallelMap worker error:', err);
+            job.error = err;
+            job.done = true;
+        };
+
+        job.workers.push(worker);
+        dispatchNext(worker);
+    }
 
     this.pushContext('doYield');
     this.pushContext();
