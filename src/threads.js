@@ -3647,22 +3647,28 @@ Process.prototype.doForEach = function (upvar, list, script) {
     var next;
     if (this.context.accumulator === null) {
         this.assertType(list, 'list');
-        this.context.accumulator = {
-            source : list,
-            remaining : list.length(),
-            idx : 0,
-            forEachStart : performance.now()
-        };
-        console.log(
-            'ForEach - Execution started at',
-            this.context.accumulator.forEachStart
-        );
+	this.context.accumulator = {
+	    source : list,
+	    remaining : list.length(),
+	    idx : 0,
+	    forEachStart : performance.now(),
+	    listSize : list.length()
+	};
+
+       // console.log(
+       //     'ForEach - Execution started at',
+       //     this.context.accumulator.forEachStart
+       // );
     }
     if (this.context.accumulator.remaining === 0) {
-        console.log(
-            'ForEach - Execution time (ms):',
-            performance.now() - this.context.accumulator.forEachStart
-        );
+	const ms = performance.now() - this.context.accumulator.forEachStart;
+
+	console.log(JSON.stringify({
+	    listSize: this.context.accumulator.listSize,
+	    numWorkers: 1,
+	    test: "ForEach",
+	    ms: ms
+	}));
         return;
     }
     this.context.accumulator.remaining -= 1;
@@ -3754,10 +3760,10 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
     }
 
     var workerCount = maxWorkersOverride || items.length;
-    console.log('ParallelForEach - Worker input:', workerInputValue,
-        'Normalized:', maxWorkersOverride || 'default',
-        'Items:', items.length,
-        'WorkerCount used:', workerCount);
+    //console.log('ParallelForEach - Worker input:', workerInputValue,
+    //    'Normalized:', maxWorkersOverride || 'default',
+    //    'Items:', items.length,
+    //    'WorkerCount used:', workerCount);
 
     // Ensure default JS mappings are loaded 
     if (typeof window.loadJSMappings === 'function') {
@@ -3814,7 +3820,7 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
 
     // console.log('ParallelForEach inputName =', inputName);
 
-    // Barrier state
+    //// Barrier state
     // [0] = count of arrived workers for this barrier cycle
     // [1] = barrier generation value
     var sharedBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
@@ -3842,10 +3848,10 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
         singleBuffer: singleBuffer,
         parallelForEachStart: performance.now()
     };
-    console.log(
-        'ParallelForEach - Execution started at',
-        job.parallelForEachStart
-    );
+    //console.log(
+//        'ParallelForEach - Execution started at',
+//        job.parallelForEachStart
+//    );
 
     this.context.accumulator = job;
 
@@ -3886,10 +3892,14 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
                 // console.log("Remaining: " + job.remaining);
                 if (job.remaining <= 0 && !job.done) {
                     // console.log("Writing results back to Snap!");
-                    console.log(
-                        'ParallelForEach - Execution time (ms):',
-                        performance.now() - job.parallelForEachStart
-                    );
+                    const ms = performance.now() - job.parallelForEachStart;
+
+			console.log(JSON.stringify({
+			  listSize: items.length,
+			  numWorkers: workerCount,
+			  test: "ParallelForEach",
+			  ms: ms
+			}));
                     job.done = true;
 
                     if (snapList && typeof snapList.put === 'function') {
@@ -4019,14 +4029,16 @@ Process.prototype.reportMap = function (reporter, list) {
         if (this.context.accumulator === null) {
             this.assertType(list, 'list');
             this.context.accumulator = {
-                source : list,
-                idx : 1,
-                target : new List(),
-                end : null,
-                remaining : list.length(),
-                mapStart : performance.now()
-            };
-            console.log('Map - Execution started at', this.context.accumulator.mapStart);
+		    source : list,
+		    idx : 1,
+		    target : new List(),
+		    end : null,
+		    remaining : list.length(),
+		    mapStart : performance.now(),
+		    listSize : list.length()
+		};
+            
+	    //console.log('Map - Execution started at', this.context.accumulator.mapStart);
             this.context.accumulator.target.isLinked = true;
             this.context.accumulator.end = this.context.accumulator.target;
         } else if (this.context.inputs.length > 2) {
@@ -4038,10 +4050,13 @@ Process.prototype.reportMap = function (reporter, list) {
             this.context.accumulator.remaining -= 1;
         }
         if (this.context.accumulator.remaining === 0) {
-            console.log(
-                'Map - Execution time (ms):',
-                performance.now() - this.context.accumulator.mapStart
-            );
+		const ms = performance.now() - this.context.accumulator.mapStart;
+		console.log(JSON.stringify({
+		  listSize: this.context.accumulator.listSize,
+		  numWorkers: 1,
+		  test: "Map",
+		  ms: ms
+		}));
             this.context.accumulator.end.rest = list.cons(
                 this.context.inputs[2]
             ).cdr();
@@ -4058,15 +4073,18 @@ Process.prototype.reportMap = function (reporter, list) {
             this.assertType(list, 'list');
             this.context.accumulator = [];
             this.context.accumulator.mapStart = performance.now();
-            console.log('Map - Execution started at', this.context.accumulator.mapStart);
+            //console.log('Map - Execution started at', this.context.accumulator.mapStart);
         } else if (this.context.inputs.length > 2) {
             this.context.accumulator.push(this.context.inputs.pop());
         }
         if (this.context.accumulator.length === list.length()) {
-            console.log(
-                'Map - Execution time (ms):',
-                performance.now() - this.context.accumulator.mapStart
-            );
+		const ms = performance.now() - this.context.accumulator.mapStart;
+		console.log(JSON.stringify({
+		  listSize: this.context.accumulator.listSize,
+		  numWorkers: 1,
+		  test: "Map",
+		  ms: ms
+		}));
             this.returnValueToParentContext(
                 new List(this.context.accumulator)
             );
@@ -4254,10 +4272,10 @@ Process.prototype.reportParallelMap = function (reporter, list, workerCountInput
     };
     this.context.accumulator = job;
 
-    console.log('ParallelMap - List to process:', items);
+    //console.log('ParallelMap - List to process:', items);
 
     mapStart = performance.now();
-    console.log('ParallelMap - Map execution started at', mapStart);
+    //console.log('ParallelMap - Map execution started at', mapStart);
 
     function dispatchNext(worker) {
         if (!tasks.length || job.done) {
@@ -4292,8 +4310,18 @@ Process.prototype.reportParallelMap = function (reporter, list, workerCountInput
                 job.remaining -= 1;
 
                 if (job.remaining <= 0 && !job.done) {
-                    console.log('ParallelMap - Success:', job.results);
-                    console.log('ParallelMap - Map execution time (ms):', performance.now() - mapStart);
+                    //console.log('ParallelMap - Success:', job.results);
+                    //console.log('ParallelMap - Map execution time (ms):', performance.now() - mapStart);
+		    const ms = performance.now() - mapStart;
+
+			console.log(JSON.stringify({
+			    listSize: items.length,
+			    requestedWorkers: workerInputValue,   // optional, can remove
+			    numWorkers: workerCount,
+			    test: "ParallelMap",
+			    ms: ms
+			}));
+
                     job.result = job.results.slice(0);
                     job.done = true;
                 }
