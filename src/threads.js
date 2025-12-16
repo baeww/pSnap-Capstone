@@ -3650,10 +3650,19 @@ Process.prototype.doForEach = function (upvar, list, script) {
         this.context.accumulator = {
             source : list,
             remaining : list.length(),
-            idx : 0
+            idx : 0,
+            forEachStart : performance.now()
         };
+        console.log(
+            'ForEach - Execution started at',
+            this.context.accumulator.forEachStart
+        );
     }
     if (this.context.accumulator.remaining === 0) {
+        console.log(
+            'ForEach - Execution time (ms):',
+            performance.now() - this.context.accumulator.forEachStart
+        );
         return;
     }
     this.context.accumulator.remaining -= 1;
@@ -3756,7 +3765,7 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
             !StageMorph.prototype.codeMappings['reportSum'] ||
             StageMorph.prototype.codeMappings['reportSum'].indexOf('%') !== -1) {
 
-            console.log('ParallelForEach - Loading default JS mappings...');
+            // console.log('ParallelForEach - Loading default JS mappings...');
             window.loadJSMappings();
         }
     } else {
@@ -3764,24 +3773,24 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
     }
 
     // Compile the script body into JS using the transpiler
-    console.log('ParallelForEach - Pre-transpile info:', {
-        selector: script && script.expression && script.expression.selector,
-        hasMappedCode: !!(script && script.expression && script.expression.mappedCode),
-        inputNames: script && script.expression && (
-            typeof script.expression.inputNames === 'function'
-                ? script.expression.inputNames()
-                : script.expression.inputNames
-        ),
-        rawInputs: script && script.expression && (
-            typeof script.expression.inputs === 'function'
-                ? script.expression.inputs()
-                : script.expression.inputs
-        )
-    });
+    // console.log('ParallelForEach - Pre-transpile info:', {
+    //     selector: script && script.expression && script.expression.selector,
+    //     hasMappedCode: !!(script && script.expression && script.expression.mappedCode),
+    //     inputNames: script && script.expression && (
+    //         typeof script.expression.inputNames === 'function'
+    //             ? script.expression.inputNames()
+    //             : script.expression.inputNames
+    //     ),
+    //     rawInputs: script && script.expression && (
+    //         typeof script.expression.inputs === 'function'
+    //             ? script.expression.inputs()
+    //             : script.expression.inputs
+    //     )
+    // });
     try {
         if (script && script.expression && script.expression.mappedCode) {
             code = script.expression.mappedCode();
-            console.log('ParallelForEach transpiled JS:\n', code);
+            // console.log('ParallelForEach transpiled JS:\n', code);
         } else {
             throw new Error('Ring cannot be compiled to JavaScript');
         }
@@ -3803,7 +3812,7 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
         }
     }
 
-    console.log('ParallelForEach inputName =', inputName);
+    // console.log('ParallelForEach inputName =', inputName);
 
     // Barrier state
     // [0] = count of arrived workers for this barrier cycle
@@ -3830,8 +3839,13 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
         workers: [],
         results: new Array(items.length),
         barrierBuffer: sharedBuffer,
-        singleBuffer: singleBuffer
+        singleBuffer: singleBuffer,
+        parallelForEachStart: performance.now()
     };
+    console.log(
+        'ParallelForEach - Execution started at',
+        job.parallelForEachStart
+    );
 
     this.context.accumulator = job;
 
@@ -3869,9 +3883,13 @@ Process.prototype.doParallelForEach = function (upvar, list, script, workerCount
                 job.results[msg.index] = msg.result;
 
                 job.remaining -= 1;
-                console.log("Remaining: " + job.remaining);
+                // console.log("Remaining: " + job.remaining);
                 if (job.remaining <= 0 && !job.done) {
-                    console.log("Writing results back to Snap!");
+                    // console.log("Writing results back to Snap!");
+                    console.log(
+                        'ParallelForEach - Execution time (ms):',
+                        performance.now() - job.parallelForEachStart
+                    );
                     job.done = true;
 
                     if (snapList && typeof snapList.put === 'function') {
