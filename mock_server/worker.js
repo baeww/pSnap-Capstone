@@ -4,6 +4,37 @@ let totalWorkers = 0;
 let barrier = null; // Int32Array over SharedArrayBuffer
 let __psnapSingleBuffer = null; // Int32Array over SharedArrayBuffer
 
+// Heuristic fixer for common bad code shapes (e.g., "return (a 100);")
+function fixCommonSyntaxIssues(code, inputName) {
+    if (typeof code !== 'string') {
+        return code;
+    }
+
+    let fixed = code;
+    let changed = false;
+
+    // Fix missing operator between identifier and number inside return/paren
+    // e.g., return (a 100); -> return (a * 100);
+    const identNum = new RegExp(`(return\\s*\\(\\s*${inputName}\\s+)(\\d+)(\\s*\\))`, 'g');
+    fixed = fixed.replace(identNum, (_, pre, num, post) => {
+        changed = true;
+        return `${pre}* ${num}${post}`;
+    });
+
+    // Fix bare identifier-number patterns in assignment contexts: a 100; -> a * 100;
+    const bareIdentNum = new RegExp(`(\\b${inputName}\\b)\\s+(\\d+)`, 'g');
+    fixed = fixed.replace(bareIdentNum, (_, ident, num) => {
+        changed = true;
+        return `${ident} * ${num}`;
+    });
+
+    if (changed && typeof console !== 'undefined' && console.warn) {
+        console.warn(`Worker ${myId}: auto-fixed code for "${inputName}" to avoid syntax errors.`, fixed);
+    }
+
+    return fixed;
+}
+
 function __psnapGetWorkerId() {
     return typeof myId === 'number' ? myId : 0;
 }
@@ -108,13 +139,20 @@ self.onmessage = async function (e) {
             
             // This pauses execution artificially to simulate uneven workloads
             await new Promise(resolve => setTimeout(resolve, randomWaitTime));
+
+            // Heuristically repair common malformed snippets before building the wrapper
+            const safeCode = fixCommonSyntaxIssues(code, inputName);
+
             // Build async function wrapper
             const asyncWrapperSrc = `
                 return (async function(${inputName}) {
-                    ${code}
+                    ${safeCode}
                     return ${inputName}; // Returns the final value of the loop variable
                 });
             `;
+
+            // Debug: show the generated function source in case of syntax issues
+            console.log(`Worker ${myId}: asyncWrapperSrc =`, asyncWrapperSrc);
 
             const makeFn = new Function(asyncWrapperSrc);
             const fn = makeFn();
